@@ -1225,28 +1225,6 @@ const Engine = (function(){
         else camera.y = Math.max(top + halfH, Math.min(bottom - halfH, camera.y));
       }
     }
-    // v6.2.3 — Clamp padrão dentro dos limites da cena. Quando o
-    // usuário NÃO configurou "Forçar limites da câmera", a câmera
-    // ficava livre pra ir além de scene.height (mostrar abaixo do
-    // chão) ou além de scene.width (mostrar fora da cena lateral).
-    // Agora, se camera.bounds não estiver definido, aplicamos o clamp
-    // automático dentro de [0, scene.width] × [0, scene.height].
-    // O comportamento é idêntico ao que aconteceria se o usuário
-    // usasse "Forçar limites da câmera" com L=0, T=0, R=scene.width,
-    // B=scene.height. Se camera.bounds já estiver definido, o bloco
-    // acima já fez o clamp — não duplicamos.
-    if(!camera.bounds && scene){
-      const z = camera.zoom || 1;
-      const halfW = (camera.viewWidth  / z) / 2;
-      const halfH = (camera.viewHeight / z) / 2;
-      const sw = scene.width  || 800;
-      const sh = scene.height || 600;
-      // Se viewport > cena: centraliza. Senão: clamp nas bordas.
-      if(sw > halfW * 2) camera.x = Math.max(halfW, Math.min(sw - halfW, camera.x));
-      else camera.x = sw / 2;
-      if(sh > halfH * 2) camera.y = Math.max(halfH, Math.min(sh - halfH, camera.y));
-      else camera.y = sh / 2;
-    }
     // Smooth zoom interpolation. Always runs — for instant zoom we set
     // both .zoom and .targetZoom to the same value so this is a no-op.
     if(camera.targetZoom == null) camera.targetZoom = camera.zoom;
@@ -3465,45 +3443,42 @@ const Engine = (function(){
       const w = (parent && parent.clientWidth)  || window.innerWidth;
       const h = (parent && parent.clientHeight) || window.innerHeight;
       if(!w || !h) return;
-      // v6.2.3 — Modo CONTAIN + fundo colorido. Mantém a resolução
-      // exata do projeto (scene.width × scene.height) como buffer, e
-      // escala via CSS pra caber inteiramente na tela (sem cortar nada
-      // do conteúdo). O "truque" pra não ter bordas pretas: pintamos o
-      // contêiner PAI com a cor de fundo da cena (scene.bg). Assim as
-      // barras laterais/superiores ficam da mesma cor do céu do jogo e
-      // são imperceptíveis. O conteúdo nunca é cortado, não há
-      // distorção, e não há borda preta visível.
-      const sw = scene.width  || 800;
-      const sh = scene.height || 600;
-      // Buffer interno = resolução de design.
-      if(canvas.width  !== sw) canvas.width  = sw;
-      if(canvas.height !== sh) canvas.height = sh;
-      // Buffers auxiliares.
+      // v6.2.3 — FILL-HEIGHT: o canvas ocupa EXATAMENTE a tela (sem
+      // bordas de nenhuma cor). A altura de design (scene.height) é a
+      // referência de escala dos sprites — eles continuam do mesmo
+      // tamanho visual que foram projetados. A largura do canvas (em
+      // pixels internos) é calculada pelo aspecto real da tela, então
+      // a câmera passa a ver mais ou menos "mundo" horizontalmente
+      // dependendo do dispositivo. Isso é o comportamento padrão de
+      // engines como GDevelop ("fill width"). Sem distorção vertical,
+      // sem corte, sem borda visível.
+      const designH = scene.height || 600;
+      const ar      = w / h;                           // aspecto da tela
+      const intH    = designH;                         // pixels internos Y
+      const intW    = Math.max(2, Math.round(designH * ar)); // pixels internos X
+      if(canvas.width  !== intW) canvas.width  = intW;
+      if(canvas.height !== intH) canvas.height = intH;
+      // CSS: canvas ocupa 100% da área do contêiner (position:absolute,0,0).
+      canvas.style.width    = w + "px";
+      canvas.style.height   = h + "px";
+      canvas.style.position = "absolute";
+      canvas.style.left     = "0";
+      canvas.style.top      = "0";
+      canvas.style.transform = "";
+      // Atualiza o viewport da câmera para o tamanho real do canvas.
+      if(typeof camera !== "undefined" && camera){
+        camera.viewWidth  = intW;
+        camera.viewHeight = intH;
+      }
+      // Buffers auxiliares (luz, shader global) acompanham o canvas.
       if(typeof lightCanvas !== "undefined" && lightCanvas){
-        if(lightCanvas.width  !== sw) lightCanvas.width  = sw;
-        if(lightCanvas.height !== sh) lightCanvas.height = sh;
+        if(lightCanvas.width  !== intW) lightCanvas.width  = intW;
+        if(lightCanvas.height !== intH) lightCanvas.height = intH;
       }
       if(typeof gameBuffer !== "undefined" && gameBuffer){
-        if(gameBuffer.width  !== sw) gameBuffer.width  = sw;
-        if(gameBuffer.height !== sh) gameBuffer.height = sh;
+        if(gameBuffer.width  !== intW) gameBuffer.width  = intW;
+        if(gameBuffer.height !== intH) gameBuffer.height = intH;
       }
-      // Escala CONTAIN (Math.min → conteúdo inteiro visível, sem corte).
-      const scale = Math.min(w / sw, h / sh);
-      const cw = Math.round(sw * scale);
-      const ch = Math.round(sh * scale);
-      canvas.style.width    = cw + "px";
-      canvas.style.height   = ch + "px";
-      canvas.style.position = "absolute";
-      canvas.style.left     = Math.round((w - cw) / 2) + "px";
-      canvas.style.top      = Math.round((h - ch) / 2) + "px";
-      canvas.style.transform = "";
-      // Pinta o contêiner com a cor de fundo da cena — assim as barras
-      // (que antes eram pretas) ficam com a cor do céu/bg do jogo e
-      // viram imperceptíveis. Se scene.background for imagem, usa scene.bg
-      // como fallback de cor sólida.
-      const bgCol = scene.bg || "#000";
-      const par = canvas.parentElement;
-      if(par && par.style.background !== bgCol) par.style.background = bgCol;
     }
 
     const camera = makeCamera(scene.width, scene.height);
