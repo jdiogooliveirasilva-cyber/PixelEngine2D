@@ -239,7 +239,7 @@
   .menu-section{font-size:10px;color:#6a6a80;text-transform:uppercase;letter-spacing:.8px;padding:8px 4px 4px}
 
   /* Runtime overlay */
-  #runtime{position:fixed;inset:0;background:#000;z-index:2000;display:none}
+  #runtime{position:fixed;inset:0;background:#000;z-index:2000;display:none;overflow:hidden}
   #runtime.open{display:block}
   #runtimeCanvas{width:100%;height:100%;display:block;image-rendering:pixelated;image-rendering:crisp-edges;touch-action:none}
   #runtimeStop{position:absolute;top:env(safe-area-inset-top,8px);right:8px;background:rgba(170,34,68,.92);color:#fff;border:none;padding:8px 12px;border-radius:5px;font-weight:600;font-size:12px;z-index:10}
@@ -1223,6 +1223,26 @@ const Engine = (function(){
         else camera.x = Math.max(left + halfW, Math.min(right - halfW, camera.x));
         if(boxH <= halfH*2) camera.y = (top + bottom) / 2;
         else camera.y = Math.max(top + halfH, Math.min(bottom - halfH, camera.y));
+      }
+    }
+    // v6.2.3 — Clamp Y automático dentro da cena (só eixo vertical).
+    // Garante que a câmera nunca mostra ACIMA de y=0 nem ABAIXO de
+    // scene.height — sem isso, com follow ativo, a câmera podia
+    // "atravessar o chão" ou mostrar espaço vazio acima do céu.
+    // O eixo X NÃO é clampado aqui: o mundo de um platformer é mais
+    // largo que scene.width (objetos além de 800px, etc.) e a câmera
+    // precisa scrollar horizontalmente. Para limitar X também, o
+    // usuário usa a ação "Forçar limites da câmera" (cam_limits).
+    if(!camera.bounds && scene){
+      const z    = camera.zoom || 1;
+      const halfH = (camera.viewHeight / z) / 2;
+      const sh    = scene.height || 600;
+      if(sh > halfH * 2 + 0.5){
+        // Cena maior que viewport: clamp nas bordas.
+        camera.y = Math.max(halfH, Math.min(sh - halfH, camera.y));
+      } else {
+        // Viewport >= cena: a câmera deve estar centrada (mostra tudo).
+        camera.y = sh / 2;
       }
     }
     // Smooth zoom interpolation. Always runs — for instant zoom we set
@@ -3443,42 +3463,45 @@ const Engine = (function(){
       const w = (parent && parent.clientWidth)  || window.innerWidth;
       const h = (parent && parent.clientHeight) || window.innerHeight;
       if(!w || !h) return;
-      // v6.2.3 — FILL-HEIGHT: o canvas ocupa EXATAMENTE a tela (sem
-      // bordas de nenhuma cor). A altura de design (scene.height) é a
-      // referência de escala dos sprites — eles continuam do mesmo
-      // tamanho visual que foram projetados. A largura do canvas (em
-      // pixels internos) é calculada pelo aspecto real da tela, então
-      // a câmera passa a ver mais ou menos "mundo" horizontalmente
-      // dependendo do dispositivo. Isso é o comportamento padrão de
-      // engines como GDevelop ("fill width"). Sem distorção vertical,
-      // sem corte, sem borda visível.
-      const designH = scene.height || 600;
-      const ar      = w / h;                           // aspecto da tela
-      const intH    = designH;                         // pixels internos Y
-      const intW    = Math.max(2, Math.round(designH * ar)); // pixels internos X
-      if(canvas.width  !== intW) canvas.width  = intW;
-      if(canvas.height !== intH) canvas.height = intH;
-      // CSS: canvas ocupa 100% da área do contêiner (position:absolute,0,0).
-      canvas.style.width    = w + "px";
-      canvas.style.height   = h + "px";
-      canvas.style.position = "absolute";
-      canvas.style.left     = "0";
-      canvas.style.top      = "0";
-      canvas.style.transform = "";
-      // Atualiza o viewport da câmera para o tamanho real do canvas.
-      if(typeof camera !== "undefined" && camera){
-        camera.viewWidth  = intW;
-        camera.viewHeight = intH;
-      }
-      // Buffers auxiliares (luz, shader global) acompanham o canvas.
+      // v6.2.3 — Modo COVER "exato":
+      //   • O buffer interno do canvas É a resolução do projeto
+      //     (scene.width × scene.height). Os sprites têm sempre a
+      //     escala que o criador definiu; nada muda no mundo do jogo.
+      //   • Via CSS, o canvas é escalado para COBRIR a tela inteira
+      //     (Math.max → o eixo mais largo determina a escala). Se os
+      //     aspect-ratios baterem (ex: projeto 1476×720 num celular
+      //     1476×720) não há corte algum. Se diferirem, há corte
+      //     mínimo no eixo menor — padrão de qualquer engine mobile.
+      //   • O contêiner tem overflow:hidden (position:fixed;inset:0),
+      //     então o corte é invisível.
+      //   • Resultado: ZERO bordas de qualquer cor. A área do projeto
+      //     ocupa exatamente a tela do dispositivo.
+      const sw = scene.width  || 800;
+      const sh = scene.height || 600;
+      // Buffer interno = dimensões do projeto (inalterado).
+      if(canvas.width  !== sw) canvas.width  = sw;
+      if(canvas.height !== sh) canvas.height = sh;
+      // Buffers auxiliares acompanham as mesmas dimensões.
       if(typeof lightCanvas !== "undefined" && lightCanvas){
-        if(lightCanvas.width  !== intW) lightCanvas.width  = intW;
-        if(lightCanvas.height !== intH) lightCanvas.height = intH;
+        if(lightCanvas.width  !== sw) lightCanvas.width  = sw;
+        if(lightCanvas.height !== sh) lightCanvas.height = sh;
       }
       if(typeof gameBuffer !== "undefined" && gameBuffer){
-        if(gameBuffer.width  !== intW) gameBuffer.width  = intW;
-        if(gameBuffer.height !== intH) gameBuffer.height = intH;
+        if(gameBuffer.width  !== sw) gameBuffer.width  = sw;
+        if(gameBuffer.height !== sh) gameBuffer.height = sh;
       }
+      // Escala CSS COVER (Math.max → preenche AMBOS os eixos).
+      const scale = Math.max(w / sw, h / sh);
+      const cw    = Math.round(sw * scale);
+      const ch    = Math.round(sh * scale);
+      canvas.style.width    = cw + "px";
+      canvas.style.height   = ch + "px";
+      canvas.style.position = "absolute";
+      // Centraliza o canvas no contêiner: valores negativos = partes
+      // que ficam fora da tela (clipadas pelo overflow:hidden do pai).
+      canvas.style.left     = Math.round((w - cw) / 2) + "px";
+      canvas.style.top      = Math.round((h - ch) / 2) + "px";
+      canvas.style.transform = "";
     }
 
     const camera = makeCamera(scene.width, scene.height);
